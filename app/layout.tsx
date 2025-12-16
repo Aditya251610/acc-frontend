@@ -1,5 +1,6 @@
 import "./globals.css"
-import Navbar from "@/components/navbar"
+import { BackgroundRippleEffect } from "@/components/ui/background-ripple-effect"
+import { AuthProvider } from "@/lib/auth-context"
 
 export default function RootLayout({
   children,
@@ -8,9 +9,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        <Navbar />
-        <main>{children}</main>
+      <body className="relative min-h-screen overflow-hidden">
+        <AuthProvider>
+          <div className="absolute inset-0 z-0 pointer-events-none">
+            <BackgroundRippleEffect />
+          </div>
+
+          <main className="relative z-10">
+            {children}
+          </main>
+        </AuthProvider>
       </body>
     </html>
   )

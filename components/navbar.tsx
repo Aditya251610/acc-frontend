@@ -1,31 +1,64 @@
-import Link from "next/link"
+'use client'
 
-// TEMP — replace with real auth later
-const isAuthenticated = false
+import { useCallback } from "react"
+import Link from "next/link"
+import { useRouter, usePathname } from "next/navigation"
+import { Navbar as ResizableNavbar, NavbarButton } from "@/components/ui/resizable-navbar"
+
+const navItems = [
+  { name: "Dashboard", link: "/dashboard" },
+  { name: "Videos", link: "/videos" },
+  { name: "Audios", link: "/audios" },
+]
 
 export default function Navbar() {
-  return (
-    <header className="w-full border-b bg-card">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
-        <span className="font-semibold text-primary">YourOrg</span>
+  const router = useRouter()
+  const pathname = usePathname()
 
-        {isAuthenticated ? (
-          // PROTECTED NAV
-          <nav className="flex gap-6 text-sm font-medium">
-            <Link href="/dashboard">Dashboard</Link>
-            <Link href="/videos">Videos</Link>
-            <Link href="/audios">Audios</Link>
-          </nav>
-        ) : (
-          // BRANDING NAV
-          <nav className="flex gap-6 text-sm">
-            <Link href="/">Home</Link>
-            <Link href="/features">Features</Link>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/login">Login</Link>
-          </nav>
-        )}
-      </div>
-    </header>
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("authToken")
+    window.dispatchEvent(new Event("authChange"))
+    router.push("/login")
+  }, [router])
+
+  const SidebarContent = ({ visible }: { visible?: boolean }) => (
+    <div className="flex h-full flex-col border-r bg-card/80 px-4 py-6 backdrop-blur">
+      <Link
+        href="/dashboard"
+        className="mb-8 flex items-center gap-2 text-lg font-semibold text-primary"
+      >
+        ACC
+      </Link>
+
+      <nav className="flex flex-1 flex-col gap-2 text-sm font-medium text-foreground">
+        {navItems.map((item) => {
+          const isActive = pathname === item.link
+          return (
+            <Link
+              key={item.link}
+              href={item.link}
+              className={`rounded-md px-3 py-2 transition hover:bg-muted ${isActive ? "bg-muted text-primary" : ""}`}
+            >
+              {item.name}
+            </Link>
+          )
+        })}
+      </nav>
+
+      <NavbarButton
+        as="button"
+        onClick={handleLogout}
+        variant="dark"
+        className="w-full text-left"
+      >
+        Logout
+      </NavbarButton>
+    </div>
+  )
+
+  return (
+    <ResizableNavbar className="sticky left-0 top-0 h-screen w-64">
+      <SidebarContent />
+    </ResizableNavbar>
   )
 }
