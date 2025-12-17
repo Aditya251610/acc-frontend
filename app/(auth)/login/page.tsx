@@ -69,7 +69,7 @@ async function onSubmit(values: LoginFormValues) {
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center">
-      <div className="w-full max-w-md rounded-2xl border bg-card p-6 space-y-6 shadow-lg">
+      <div style={{ borderRadius: '1rem' }} className="w-full max-w-md border bg-card p-6 space-y-6 shadow-lg">
         
         <div className="text-center space-y-1">
           <h1 className="text-2xl font-semibold">Login</h1>
@@ -109,7 +109,7 @@ async function onSubmit(values: LoginFormValues) {
               )}
             />
 
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" style={{ borderRadius: '0.5rem' }}>
               Login
             </Button>
           </form>

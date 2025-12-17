@@ -7,8 +7,8 @@ export default function HomePage() {
         <PublicNavbar />
       </div>
       <div className="flex min-h-[80vh] items-center justify-center">
-        <h1 className="text-2xl font-semibold text-foreground">
-          Welcome to <span className="text-primary">ACC</span>
+        <h1 className="flex items-center gap-3 text-2xl font-semibold text-foreground">
+          Welcome to <img src="/acc_logo.png" alt="ACC" className="h-8 w-auto inline-block" />
         </h1>
       </div>
     </>
