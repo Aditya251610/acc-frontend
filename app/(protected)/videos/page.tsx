@@ -94,13 +94,6 @@ export default function VideosPage() {
 
   return (
     <div className="container mx-auto p-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Videos</h1>
-        <p className="mt-2 text-muted-foreground">
-          Manage and view your video content
-        </p>
-      </div>
-
       {loading && (
         <Card>
           <CardContent className="flex items-center justify-center py-12">

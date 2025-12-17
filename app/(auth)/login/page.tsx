@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useEffect, useState } from "react"
 
 import { useRouter } from "next/navigation"
 
@@ -17,6 +18,8 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
 import axios from "axios"
 
 const loginSchema = z.object({
@@ -27,8 +30,20 @@ const loginSchema = z.object({
 type LoginFormValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
-
+  const [showSessionExpired, setShowSessionExpired] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    // Check if session expired
+    const expired = localStorage.getItem('sessionExpired')
+    if (expired === 'true') {
+      setShowSessionExpired(true)
+      localStorage.removeItem('sessionExpired')
+      
+      // Auto-dismiss after 5 seconds
+      setTimeout(() => setShowSessionExpired(false), 5000)
+    }
+  }, [])
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -69,14 +84,24 @@ async function onSubmit(values: LoginFormValues) {
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center">
-      <div style={{ borderRadius: '1rem' }} className="w-full max-w-md border bg-card p-6 space-y-6 shadow-lg">
+      <div className="w-full max-w-md space-y-4">
+        {showSessionExpired && (
+          <Alert variant="destructive" style={{ borderRadius: '0.75rem' }}>
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Session Expired</AlertTitle>
+            <AlertDescription>
+              Your session has expired. Please login again to continue.
+            </AlertDescription>
+          </Alert>
+        )}
         
-        <div className="text-center space-y-1">
-          <h1 className="text-2xl font-semibold">Login</h1>
-          <p className="text-muted-foreground">
-            Enter your email and password
-          </p>
-        </div>
+        <div style={{ borderRadius: '1rem' }} className="border bg-card p-6 space-y-6 shadow-lg">
+          <div className="text-center space-y-1">
+            <h1 className="text-2xl font-semibold">Login</h1>
+            <p className="text-muted-foreground">
+              Enter your email and password
+            </p>
+          </div>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -115,12 +140,13 @@ async function onSubmit(values: LoginFormValues) {
           </form>
         </Form>
 
-        <p className="text-center text-sm">
-          Don’t have an account?{" "}
-          <Link href="/signup" className="text-primary underline">
-            Sign up
-          </Link>
-        </p>
+          <p className="text-center text-sm">
+            Don't have an account?{" "}
+            <Link href="/signup" className="text-primary underline">
+              Sign up
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )
