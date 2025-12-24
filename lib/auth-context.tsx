@@ -1,11 +1,15 @@
 'use client'
 
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import { clearAuthToken, clearWorkspaceId, getAuthToken, getAuthUserId } from '@/lib/api'
 
 interface AuthContextType {
   isAuthenticated: boolean
   loading: boolean
+  token: string | null
+  userId: string | null
+  logout: () => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -24,23 +28,38 @@ function isTokenExpired(token: string): boolean {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [token, setToken] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
-  const checkAuth = () => {
-    const token = localStorage.getItem('authToken')
+  const logout = useCallback(() => {
+    clearAuthToken()
+    clearWorkspaceId()
+    setToken(null)
+    setIsAuthenticated(false)
+    setLoading(false)
+    if (!pathname?.startsWith('/login') && !pathname?.startsWith('/signup')) {
+      router.push('/login')
+    }
+  }, [pathname, router])
+
+  const checkAuth = useCallback(() => {
+    const nextToken = getAuthToken()
     
-    if (!token) {
+    if (!nextToken) {
       setIsAuthenticated(false)
+      setToken(null)
       setLoading(false)
       return
     }
 
     // Check if token is expired
-    if (isTokenExpired(token)) {
-      localStorage.removeItem('authToken')
+    if (isTokenExpired(nextToken)) {
+      clearAuthToken()
+      clearWorkspaceId()
       localStorage.setItem('sessionExpired', 'true')
       setIsAuthenticated(false)
+      setToken(null)
       setLoading(false)
       
       // Only redirect if not already on auth pages
@@ -51,12 +70,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     setIsAuthenticated(true)
+    setToken(nextToken)
     setLoading(false)
-  }
+  }, [pathname, router])
 
   useEffect(() => {
-    checkAuth()
-    
+    const t = setTimeout(checkAuth, 0)
+
     // Check token expiry every minute
     const interval = setInterval(checkAuth, 60000)
     
@@ -67,14 +87,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener('authChange', checkAuth)
     
     return () => {
+      clearTimeout(t)
       clearInterval(interval)
       window.removeEventListener('storage', checkAuth)
       window.removeEventListener('authChange', checkAuth)
     }
-  }, [pathname, router])
+  }, [checkAuth])
+
+  const userId = useMemo(() => {
+    if (!token) return null
+    return getAuthUserId()
+  }, [token])
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, loading }}>
+    <AuthContext.Provider value={{ isAuthenticated, loading, token, userId, logout }}>
       {children}
     </AuthContext.Provider>
   )

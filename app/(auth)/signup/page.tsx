@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import axios from "axios"
+import { toast } from "sonner"
+import { apiUrl } from "@/lib/api"
 
 const signupSchema = z.object({
   username: z.string().min(2, "Full name is required"),
@@ -42,11 +44,59 @@ export default function SignupPage() {
 
   async function onSubmit(values: SignupFormValues) {
     try {
-      const response = await axios.post("http://localhost:8000/auth", values)
-      console.log("Signup successful:", response)
+      await axios.post(apiUrl("/auth/"), values)
+      // mark success and redirect to login
+      localStorage.setItem('signupSuccess', 'true')
       router.push("/login")
-    } catch (error: any) {
-      console.error("Signup failed:", error.message)
+    } catch (error: unknown) {
+      // Robust error handling for axios/network/server errors
+      const isAxios = axios.isAxiosError(error)
+      const status = isAxios ? error.response?.status : undefined
+      const data = isAxios ? error.response?.data : undefined
+
+      // Log for debugging (still safe)
+      console.warn(
+        "Signup failed:",
+        isAxios ? (data || error.message) : error instanceof Error ? error.message : error,
+      )
+
+      // Conflict - user exists
+      if (status === 409 || /already exist/i.test(String(data?.detail || data || ''))) {
+        toast.error('User already exist')
+        router.push('/login')
+        return
+      }
+
+      // Validation errors (400) - show messages if available
+      if (status === 400 && data) {
+        // common shapes: { detail: 'msg' } or { errors: [...] } or { field: ['err'] }
+        if (typeof data.detail === 'string') {
+          toast.error(data.detail)
+        } else if (Array.isArray(data.errors) && data.errors.length) {
+          toast.error(String(data.errors[0]))
+        } else if (typeof data === 'object') {
+          // pick first field error
+          const first = Object.values(data)[0]
+          if (Array.isArray(first) && first.length) toast.error(String(first[0]))
+          else toast.error(String(first))
+        } else {
+          toast.error(
+            (error instanceof Error ? error.message : undefined) || 'Signup failed',
+          )
+        }
+        return
+      }
+
+      // Fallback message
+      const detail =
+        isAxios &&
+        data &&
+        typeof data === "object" &&
+        "detail" in data
+          ? String((data as Record<string, unknown>).detail)
+          : undefined
+
+      toast.error(detail || (error instanceof Error ? error.message : undefined) || 'Signup failed')
     }
   }
 

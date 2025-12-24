@@ -4,6 +4,8 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import Navbar from "@/components/navbar"
+import { WorkspaceProvider } from "@/lib/workspace-context"
+import WorkspaceRequired from "@/components/workspace-required"
 
 export default function ProtectedLayout({
   children,
@@ -14,23 +16,24 @@ export default function ProtectedLayout({
   const router = useRouter()
 
   useEffect(() => {
-    // If not authenticated, redirect to login
     if (!loading && !isAuthenticated) {
       router.push("/login")
     }
   }, [isAuthenticated, loading, router])
 
-  // Show nothing while checking auth or if not authenticated
   if (loading || !isAuthenticated) {
     return null
   }
 
   return (
-    <div className="relative z-10 flex min-h-screen bg-background">
-      <Navbar />
-      <main className="flex-1 p-6">
-        {children}
-      </main>
-    </div>
+    <WorkspaceProvider>
+      <WorkspaceRequired />
+      <div className="relative z-10 flex h-dvh bg-background overflow-hidden">
+        <div className="shrink-0">
+          <Navbar />
+        </div>
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">{children}</main>
+      </div>
+    </WorkspaceProvider>
   )
 }

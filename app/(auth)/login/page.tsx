@@ -21,6 +21,8 @@ import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import axios from "axios"
+import { toast } from "sonner"
+import { apiUrl } from "@/lib/api"
 
 const loginSchema = z.object({
   username: z.string().min(5, "Enter a valid username"),
@@ -30,20 +32,25 @@ const loginSchema = z.object({
 type LoginFormValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
-  const [showSessionExpired, setShowSessionExpired] = useState(false)
+  const [showSessionExpired, setShowSessionExpired] = useState(() => {
+    if (typeof window === "undefined") return false
+    return localStorage.getItem("sessionExpired") === "true"
+  })
   const router = useRouter()
 
   useEffect(() => {
-    // Check if session expired
-    const expired = localStorage.getItem('sessionExpired')
-    if (expired === 'true') {
-      setShowSessionExpired(true)
-      localStorage.removeItem('sessionExpired')
-      
-      // Auto-dismiss after 5 seconds
-      setTimeout(() => setShowSessionExpired(false), 5000)
+    if (showSessionExpired) {
+      localStorage.removeItem("sessionExpired")
+      const t = setTimeout(() => setShowSessionExpired(false), 5000)
+      return () => clearTimeout(t)
     }
-  }, [])
+    // check signup success flag
+    const signupSuccess = localStorage.getItem('signupSuccess')
+    if (signupSuccess === 'true') {
+      toast.success('Signup successful — please login')
+      localStorage.removeItem('signupSuccess')
+    }
+  }, [showSessionExpired])
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -62,23 +69,28 @@ async function onSubmit(values: LoginFormValues) {
 
   try {
     const response = await axios.post(
-      "http://localhost:8000/auth/token",
+      apiUrl("/auth/token"),
       params,
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       }
     );
-    console.log("Login Successful:", response.data);
     localStorage.setItem("authToken", response.data.access_token)
     // Trigger auth state update
     window.dispatchEvent(new Event('authChange'))
     router.push("/dashboard")
-  } catch (error: any) {
-    console.error(
-      "Login failed:",
-           error.response?.status,
-      error.response?.data ?? error.message
-    );
+  } catch (error: unknown) {
+    if (axios.isAxiosError(error)) {
+      toast.error(
+        String(
+          error.response?.data?.detail ??
+            error.response?.data ??
+            'Incorrect username or password',
+        ),
+      )
+    } else {
+      toast.error('Incorrect username or password')
+    }
   }
 }
 
@@ -141,7 +153,7 @@ async function onSubmit(values: LoginFormValues) {
         </Form>
 
           <p className="text-center text-sm">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link href="/signup" className="text-primary underline">
               Sign up
             </Link>

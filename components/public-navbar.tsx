@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import {
   Navbar as ResizableNavbar,
@@ -29,7 +30,7 @@ export default function PublicNavbar() {
           href="/"
           className="relative z-20 flex items-center gap-2 px-2 py-1 text-sm font-semibold text-black dark:text-white"
         >
-          <img src="/acc_logo.png" alt="ACC" className="h-8 w-auto" />
+          <Image src="/acc_logo.png" alt="ACC" width={128} height={32} className="h-8 w-auto" priority />
         </Link>
 
         <NavItems items={navItems} />
@@ -50,7 +51,7 @@ export default function PublicNavbar() {
             href="/"
             className="relative z-20 flex items-center gap-2 px-2 py-1 text-sm font-semibold text-black dark:text-white"
           >
-            <img src="/acc_logo.png" alt="ACC" className="h-8 w-auto" />
+            <Image src="/acc_logo.png" alt="ACC" width={128} height={32} className="h-8 w-auto" priority />
           </Link>
 
           <MobileNavToggle
