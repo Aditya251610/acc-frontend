@@ -463,7 +463,7 @@ export default function DocumentsPage() {
                       <div className="truncate text-sm font-medium">{row.title}</div>
                     </div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {row.kind === "file" ? "FILE" : "DOC"} • ID: {String(row.id)}
+                      {row.kind === "file" ? "FILE" : "DOC"}
                     </div>
                   </div>
 

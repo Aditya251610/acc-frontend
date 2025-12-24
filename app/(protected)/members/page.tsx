@@ -38,6 +38,59 @@ type Member = {
   email?: string
 }
 
+type UserLike = {
+  id?: number | string
+  user_id?: number | string
+  username?: string
+  name?: string
+  email?: string
+}
+
+function toUserKey(member: Member) {
+  const key = member.user_id ?? member.id
+  return String(key ?? "").trim()
+}
+
+function extractUsername(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null
+  const u = payload as Record<string, unknown>
+
+  const candidates = [u.username, u.name, u.email]
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim()
+  }
+
+  const nested = (u.user ?? u.account ?? u.profile) as Record<string, unknown> | undefined
+  if (nested && typeof nested === "object") {
+    const nestedCandidates = [nested.username, nested.name, nested.email]
+    for (const c of nestedCandidates) {
+      if (typeof c === "string" && c.trim()) return c.trim()
+    }
+  }
+
+  return null
+}
+
+function normalizeMember(raw: unknown): Member {
+  const m = raw as Record<string, unknown>
+  const user = (m?.user ?? m?.account ?? m?.profile) as Record<string, unknown> | undefined
+
+  const id = m?.id as Member["id"]
+  const user_id = (m?.user_id ?? m?.userId ?? user?.id ?? user?.user_id) as Member["user_id"]
+  const role = (m?.role ?? m?.member_role ?? m?.workspace_role) as Member["role"]
+  const username = (
+    m?.username ??
+    m?.user_username ??
+    m?.user_name ??
+    m?.userName ??
+    user?.username ??
+    user?.name
+  ) as Member["username"]
+  const email = (m?.email ?? user?.email) as Member["email"]
+
+  return { id, user_id, role, username, email }
+}
+
 function normalizeId(value: unknown) {
   return String(value ?? "")
 }
@@ -50,6 +103,8 @@ export default function MembersPage() {
 
   const [items, setItems] = useState<Member[]>([])
   const [loading, setLoading] = useState(false)
+
+  const [usernamesById, setUsernamesById] = useState<Record<string, string>>({})
 
   const [userId, setUserId] = useState("")
   const [role, setRole] = useState<(typeof ROLE_OPTIONS)[number]>("VIEWER")
@@ -79,7 +134,20 @@ export default function MembersPage() {
           ? ((payload as { items: unknown[] }).items as Member[])
           : []
 
-      setItems(members)
+      const normalized = members.map(normalizeMember)
+
+      // Seed username cache from list response.
+      setUsernamesById((prev) => {
+        const next = { ...prev }
+        for (const m of normalized) {
+          const k = toUserKey(m)
+          if (!k) continue
+          if (m.username && !next[k]) next[k] = m.username
+        }
+        return next
+      })
+
+      setItems(normalized)
     } catch (e) {
       const handled = handleApiError(e)
       if (handled.kind === "not-found") {
@@ -91,6 +159,58 @@ export default function MembersPage() {
       setLoading(false)
     }
   }, [ready, workspaceId])
+
+  const fetchUsernameByUserId = useCallback(
+    async (userId: string) => {
+      if (!ready) return
+      if (!userId) return
+      if (usernamesById[userId]) return
+
+      // Best-effort: support common backends without requiring a schema change.
+      const tryPaths = [
+        `/users/${userId}`,
+        `/users/${userId}/profile`,
+        `/users/${userId}/public`,
+        `/user/${userId}`,
+      ]
+
+      for (const path of tryPaths) {
+        try {
+          const payload = await apiFetchJson<unknown>(path, { method: "GET", auth: true })
+          const name = extractUsername(payload)
+          if (name) {
+            setUsernamesById((prev) => ({ ...prev, [userId]: name }))
+            return
+          }
+        } catch (e) {
+          if (e instanceof ApiError) {
+            if (e.status === 401 || e.status === 403) {
+              handleApiError(e)
+              return
+            }
+            // Ignore 404/405 and try next candidate path.
+            if (e.status === 404 || e.status === 405) continue
+          }
+        }
+      }
+    },
+    [ready, usernamesById],
+  )
+
+  useEffect(() => {
+    if (!ready) return
+
+    const missing = new Set<string>()
+    for (const m of items) {
+      const k = toUserKey(m)
+      if (!k) continue
+      if (m.username) continue
+      if (!usernamesById[k]) missing.add(k)
+    }
+
+    if (missing.size === 0) return
+    void Promise.all(Array.from(missing).slice(0, 25).map((id) => fetchUsernameByUserId(id)))
+  }, [fetchUsernameByUserId, items, ready, usernamesById])
 
   useEffect(() => {
     if (authLoading) return
@@ -139,7 +259,14 @@ export default function MembersPage() {
         body: JSON.stringify({ user_id: uid, role }),
       })
 
-      setItems((prev) => [created, ...prev])
+      const normalized = normalizeMember(created)
+      setItems((prev) => [normalized, ...prev])
+      const key = toUserKey(normalized)
+      if (key && normalized.username) {
+        setUsernamesById((prev) => ({ ...prev, [key]: normalized.username! }))
+      } else if (key) {
+        void fetchUsernameByUserId(key)
+      }
       setUserId("")
       setRole("VIEWER")
       toast.success("Member added")
@@ -174,50 +301,87 @@ export default function MembersPage() {
       }
 
       // Try common patterns without changing backend contracts.
+      // Prefer user_id first (some APIs use user_id in the path).
       const tryPaths = [
-        `/workspaces/${workspaceId}/members/${key}`,
         `/workspaces/${workspaceId}/members/${member.user_id ?? key}`,
+        `/workspaces/${workspaceId}/members/${key}`,
       ]
 
       let updated: Member | null = null
       let lastErr: string | null = null
 
+      const bodyForMember = JSON.stringify({ role: nextRole, user_id: member.user_id })
+      const bodyForCollection = JSON.stringify({ user_id: member.user_id ?? key, role: nextRole })
+
       for (const path of tryPaths) {
-        try {
-          updated = await apiFetchJson<Member>(path, {
-            method: "PUT",
-            auth: true,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ role: nextRole, user_id: member.user_id }),
-          })
-          lastErr = null
-          break
-        } catch (e) {
-          const handled = handleApiError(e)
-          if (handled.kind === "unauthorized") return
-          lastErr = e instanceof ApiError ? e.message : "Update failed"
+        for (const method of ["PATCH", "PUT"] as const) {
+          try {
+            updated = await apiFetchJson<Member>(path, {
+              method,
+              auth: true,
+              headers: { "Content-Type": "application/json" },
+              body: bodyForMember,
+            })
+            lastErr = null
+            break
+          } catch (e) {
+            if (e instanceof ApiError) {
+              // Auth and permission errors should be surfaced immediately.
+              if (e.status === 401 || e.status === 403) {
+                handleApiError(e)
+                return
+              }
+
+              // 404/405 are expected during probing different endpoints/methods.
+              if (e.status === 404 || e.status === 405) {
+                lastErr = null
+                continue
+              }
+
+              lastErr = e.message
+              continue
+            }
+
+            lastErr = e instanceof Error ? e.message : "Update failed"
+          }
+        }
+
+        if (updated) break
+      }
+
+      if (!updated) {
+        // Fallback: some APIs update via collection route
+        for (const method of ["PATCH", "PUT"] as const) {
+          try {
+            updated = await apiFetchJson<Member>(`/workspaces/${workspaceId}/members`, {
+              method,
+              auth: true,
+              headers: { "Content-Type": "application/json" },
+              body: bodyForCollection,
+            })
+            lastErr = null
+            break
+          } catch (e) {
+            if (e instanceof ApiError) {
+              if (e.status === 401 || e.status === 403) {
+                handleApiError(e)
+                return
+              }
+              if (e.status === 404 || e.status === 405) {
+                lastErr = null
+                continue
+              }
+              lastErr = e.message
+              continue
+            }
+
+            lastErr = e instanceof Error ? e.message : "Update failed"
+          }
         }
       }
 
       if (!updated) {
-        // Fallback: PUT to collection (some APIs use upsert)
-        try {
-          updated = await apiFetchJson<Member>(`/workspaces/${workspaceId}/members`, {
-            method: "PUT",
-            auth: true,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: member.user_id ?? key, role: nextRole }),
-          })
-          lastErr = null
-        } catch (e) {
-          const handled = handleApiError(e)
-          if (handled.kind === "unauthorized") return
-          lastErr = e instanceof ApiError ? e.message : "Update failed"
-        }
-      }
-
-      if (!updated) {
-        toast.error(lastErr ?? "Update failed")
+        toast.error(lastErr ?? "Role update is not supported by the server")
         return
       }
 
@@ -449,10 +613,7 @@ export default function MembersPage() {
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">
-                        {m.username ?? m.email ?? `User ${String(m.user_id ?? key)}`}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        id: {String(m.user_id ?? key)} • role: {mRole}
+                        {m.username ?? usernamesById[toUserKey(m)] ?? m.email ?? "User"}
                       </div>
                     </div>
 
