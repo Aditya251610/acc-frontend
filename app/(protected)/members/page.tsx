@@ -24,11 +24,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ApiError, apiFetchJson } from "@/lib/api"
+import { ApiError, apiFetchJson, getMyProfile, type MyProfile } from "@/lib/api"
 import { handleApiError } from "@/lib/handle-api-error"
 import { useAuth } from "@/lib/auth-context"
 import { useWorkspace } from "@/lib/workspace-context"
 import { canAssignOwner, canManageMembers } from "@/lib/rbac"
+import { getCachedMediaUrl, getOrFetchMediaUrl } from "@/lib/media-cache"
 
 type Member = {
   id?: number | string
@@ -36,6 +37,7 @@ type Member = {
   role?: string
   username?: string
   email?: string
+  avatar_url?: string | null
 }
 
 function toUserKey(member: Member) {
@@ -52,22 +54,63 @@ function normalizeMember(raw: unknown): Member {
   const role = m?.role as Member["role"]
   const username = m?.username as Member["username"]
   const email = m?.email as Member["email"]
+  const avatar_url =
+    (m?.avatar_url as Member["avatar_url"]) ??
+    ((m as unknown as { avatarUrl?: unknown }).avatarUrl as Member["avatar_url"]) ??
+    ((m as unknown as { avatar?: unknown }).avatar as Member["avatar_url"]) ??
+    ((m as unknown as { profile_image_url?: unknown }).profile_image_url as Member["avatar_url"]) ??
+    ((m as unknown as { profileImageUrl?: unknown }).profileImageUrl as Member["avatar_url"]) ??
+    null
 
-  return { id, user_id, role, username, email }
+  return { id, user_id, role, username, email, avatar_url }
 }
 
 function normalizeId(value: unknown) {
   return String(value ?? "")
 }
 
+function parseAvatarMediaRef(value: string | null | undefined): { workspaceId: string; mediaId: string } | null {
+  const trimmed = String(value ?? "").trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith("media:")) {
+    const parts = trimmed.split(":")
+    if (parts.length !== 3) return null
+    const workspaceId = parts[1]
+    const mediaId = parts[2]
+    if (!workspaceId || !mediaId) return null
+    return { workspaceId, mediaId }
+  }
+
+  const m = trimmed.match(/(?:^|\/)workspaces\/([^/]+)\/media\/([^/]+)\/download\b/)
+  if (!m) return null
+  const workspaceId = m[1]
+  const mediaId = m[2]
+  if (!workspaceId || !mediaId) return null
+  return { workspaceId, mediaId }
+}
+
+function getMemberInitial(m: Member): string {
+  const username = String(m.username ?? "").trim()
+  if (username) return username[0].toUpperCase()
+  const email = String(m.email ?? "").trim()
+  if (email) return email[0].toUpperCase()
+  return "U"
+}
+
 const ROLE_OPTIONS = ["OWNER", "ADMIN", "EDITOR", "REVIEWER", "VIEWER"] as const
 
 export default function MembersPage() {
   const { workspaceId, currentUserRole, loadingRole, loadingWorkspaces } = useWorkspace()
-  const { loading: authLoading, isAuthenticated } = useAuth()
+  const { loading: authLoading, isAuthenticated, userId: authUserId } = useAuth()
 
   const [items, setItems] = useState<Member[]>([])
   const [loading, setLoading] = useState(false)
+
+  const [avatarByUserKey, setAvatarByUserKey] = useState<Record<string, string | null>>({})
+
+  const [meProfile, setMeProfile] = useState<MyProfile | null>(null)
+  const [meAvatarResolvedUrl, setMeAvatarResolvedUrl] = useState<string | null>(null)
 
   const [userId, setUserId] = useState("")
   const [role, setRole] = useState<(typeof ROLE_OPTIONS)[number]>("VIEWER")
@@ -126,6 +169,124 @@ export default function MembersPage() {
 
     void load()
   }, [authLoading, isAuthenticated, load, loadingRole, loadingWorkspaces, workspaceId])
+
+  useEffect(() => {
+    if (authLoading) return
+    if (!isAuthenticated) {
+      setMeProfile(null)
+      setMeAvatarResolvedUrl(null)
+      return
+    }
+
+    let cancelled = false
+    void getMyProfile()
+      .then((p) => {
+        if (!cancelled) setMeProfile(p)
+      })
+      .catch(() => {
+        // ignore
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authLoading, isAuthenticated])
+
+  useEffect(() => {
+    const raw = String(meProfile?.avatar_url ?? "").trim()
+    const ref = parseAvatarMediaRef(raw)
+    let cancelled = false
+
+    queueMicrotask(() => {
+      if (!cancelled) setMeAvatarResolvedUrl(null)
+    })
+
+    if (!raw) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (!ref) {
+      queueMicrotask(() => {
+        if (!cancelled) setMeAvatarResolvedUrl(raw)
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const cached = getCachedMediaUrl(ref.workspaceId, ref.mediaId)
+    if (cached) {
+      queueMicrotask(() => {
+        if (!cancelled) setMeAvatarResolvedUrl(cached)
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void getOrFetchMediaUrl(ref.workspaceId, ref.mediaId)
+      .then((url) => {
+        if (!cancelled) setMeAvatarResolvedUrl(url)
+      })
+      .catch(() => {
+        // ignore
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [meProfile?.avatar_url])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!workspaceId || items.length === 0) {
+      setAvatarByUserKey({})
+      return
+    }
+
+    void (async () => {
+      const next: Record<string, string | null> = {}
+      await Promise.all(
+        items.map(async (m) => {
+          const key = toUserKey(m)
+          if (!key) return
+
+          const raw = String(m.avatar_url ?? "").trim()
+          if (!raw) {
+            next[key] = null
+            return
+          }
+
+          const ref = parseAvatarMediaRef(raw)
+          if (!ref) {
+            next[key] = raw
+            return
+          }
+
+          const cached = getCachedMediaUrl(ref.workspaceId, ref.mediaId)
+          if (cached) {
+            next[key] = cached
+            return
+          }
+
+          try {
+            next[key] = await getOrFetchMediaUrl(ref.workspaceId, ref.mediaId)
+          } catch {
+            next[key] = null
+          }
+        }),
+      )
+
+      if (!cancelled) setAvatarByUserKey(next)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [items, workspaceId])
 
   const onAdd = useCallback(async () => {
     if (!ready) return
@@ -406,6 +567,13 @@ export default function MembersPage() {
                 const key = m.id ?? m.user_id
                 const mRole = String(m.role ?? "VIEWER").toUpperCase()
                 const ownerLocked = mRole === "OWNER" && !canSetOwner
+                const userKey = toUserKey(m)
+                const isMe =
+                  authUserId !== null &&
+                  authUserId !== undefined &&
+                  normalizeId(m.user_id) === normalizeId(authUserId)
+
+                const avatarUrl = (isMe ? meAvatarResolvedUrl : null) ?? (userKey ? avatarByUserKey[userKey] : null)
 
                 return (
                   <div
@@ -413,9 +581,25 @@ export default function MembersPage() {
                     className="flex flex-col gap-2 rounded-lg border bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
                     style={{ borderRadius: 14 }}
                   >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {m.username ?? m.email ?? (toUserKey(m) ? `User #${toUserKey(m)}` : "User")}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div
+                        className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border bg-muted"
+                        style={{ borderRadius: 9999 }}
+                      >
+                        {avatarUrl ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img src={avatarUrl} alt="Avatar" className="h-full w-full object-contain" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-muted-foreground">
+                            {getMemberInitial(m)}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">
+                          {m.username ?? m.email ?? (toUserKey(m) ? `User #${toUserKey(m)}` : "User")}
+                        </div>
                       </div>
                     </div>
 

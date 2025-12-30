@@ -85,6 +85,22 @@ function parseAvatarMediaRef(value: string | null): { workspaceId: string; media
   return { workspaceId, mediaId }
 }
 
+function withUniqueFilename(file: File): File {
+  const name = String(file.name ?? "upload").trim() || "upload"
+  const dot = name.lastIndexOf(".")
+  const base = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ""
+
+  const safeBase = base.replace(/[^a-zA-Z0-9-_]+/g, "-").slice(0, 64) || "file"
+  const unique = `${safeBase}-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`
+
+  try {
+    return new File([file], unique, { type: file.type })
+  } catch {
+    return file
+  }
+}
+
 async function resolveWorkspaceRolesForUser(opts: {
   userId: string | null
   recent: NonNullable<MyProfile['recent_workspaces']>
@@ -307,7 +323,7 @@ export default function ProfilePage() {
       setUploadingAvatar(true)
       try {
         const form = new FormData()
-        form.append('file', file)
+        form.append('file', withUniqueFilename(file))
 
         const uploadRes = await apiFetch(`/workspaces/${uploadWorkspaceId}/media/upload`, {
           method: 'POST',

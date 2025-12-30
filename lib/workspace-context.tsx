@@ -30,6 +30,7 @@ type Member = {
   role?: string
   username?: string
   email?: string
+  avatar_url?: string | null
 }
 
 type WorkspaceContextValue = {
