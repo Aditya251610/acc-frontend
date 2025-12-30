@@ -2,11 +2,11 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+function Card({ className, style, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card"
-      style={{ borderRadius: '0.875rem' }}
+      style={{ borderRadius: 24, ...style }}
       className={cn(
         "bg-card text-card-foreground flex flex-col gap-6 border py-6 shadow-sm",
         className

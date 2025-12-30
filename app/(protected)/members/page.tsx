@@ -24,7 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ApiError, apiFetch, apiFetchJson, extractErrorMessage } from "@/lib/api"
+import { ApiError, apiFetchJson } from "@/lib/api"
 import { handleApiError } from "@/lib/handle-api-error"
 import { useAuth } from "@/lib/auth-context"
 import { useWorkspace } from "@/lib/workspace-context"
@@ -38,55 +38,20 @@ type Member = {
   email?: string
 }
 
-type UserLike = {
-  id?: number | string
-  user_id?: number | string
-  username?: string
-  name?: string
-  email?: string
-}
-
 function toUserKey(member: Member) {
   const key = member.user_id ?? member.id
   return String(key ?? "").trim()
 }
 
-function extractUsername(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null
-  const u = payload as Record<string, unknown>
-
-  const candidates = [u.username, u.name, u.email]
-  for (const c of candidates) {
-    if (typeof c === "string" && c.trim()) return c.trim()
-  }
-
-  const nested = (u.user ?? u.account ?? u.profile) as Record<string, unknown> | undefined
-  if (nested && typeof nested === "object") {
-    const nestedCandidates = [nested.username, nested.name, nested.email]
-    for (const c of nestedCandidates) {
-      if (typeof c === "string" && c.trim()) return c.trim()
-    }
-  }
-
-  return null
-}
-
 function normalizeMember(raw: unknown): Member {
   const m = raw as Record<string, unknown>
-  const user = (m?.user ?? m?.account ?? m?.profile) as Record<string, unknown> | undefined
 
+  // Backend source of truth now returns username/email directly.
   const id = m?.id as Member["id"]
-  const user_id = (m?.user_id ?? m?.userId ?? user?.id ?? user?.user_id) as Member["user_id"]
-  const role = (m?.role ?? m?.member_role ?? m?.workspace_role) as Member["role"]
-  const username = (
-    m?.username ??
-    m?.user_username ??
-    m?.user_name ??
-    m?.userName ??
-    user?.username ??
-    user?.name
-  ) as Member["username"]
-  const email = (m?.email ?? user?.email) as Member["email"]
+  const user_id = m?.user_id as Member["user_id"]
+  const role = m?.role as Member["role"]
+  const username = m?.username as Member["username"]
+  const email = m?.email as Member["email"]
 
   return { id, user_id, role, username, email }
 }
@@ -103,8 +68,6 @@ export default function MembersPage() {
 
   const [items, setItems] = useState<Member[]>([])
   const [loading, setLoading] = useState(false)
-
-  const [usernamesById, setUsernamesById] = useState<Record<string, string>>({})
 
   const [userId, setUserId] = useState("")
   const [role, setRole] = useState<(typeof ROLE_OPTIONS)[number]>("VIEWER")
@@ -123,31 +86,12 @@ export default function MembersPage() {
     if (!ready) return
     setLoading(true)
     try {
-      const payload = await apiFetchJson<unknown>(`/workspaces/${workspaceId}/members`, {
+      const payload = await apiFetchJson<Member[]>(`/workspaces/${workspaceId}/members`, {
         method: "GET",
         auth: true,
       })
 
-      const members: Member[] = Array.isArray(payload)
-        ? (payload as Member[])
-        : Array.isArray((payload as { items?: unknown }).items)
-          ? ((payload as { items: unknown[] }).items as Member[])
-          : []
-
-      const normalized = members.map(normalizeMember)
-
-      // Seed username cache from list response.
-      setUsernamesById((prev) => {
-        const next = { ...prev }
-        for (const m of normalized) {
-          const k = toUserKey(m)
-          if (!k) continue
-          if (m.username && !next[k]) next[k] = m.username
-        }
-        return next
-      })
-
-      setItems(normalized)
+      setItems(Array.isArray(payload) ? payload.map(normalizeMember) : [])
     } catch (e) {
       const handled = handleApiError(e)
       if (handled.kind === "not-found") {
@@ -159,58 +103,6 @@ export default function MembersPage() {
       setLoading(false)
     }
   }, [ready, workspaceId])
-
-  const fetchUsernameByUserId = useCallback(
-    async (userId: string) => {
-      if (!ready) return
-      if (!userId) return
-      if (usernamesById[userId]) return
-
-      // Best-effort: support common backends without requiring a schema change.
-      const tryPaths = [
-        `/users/${userId}`,
-        `/users/${userId}/profile`,
-        `/users/${userId}/public`,
-        `/user/${userId}`,
-      ]
-
-      for (const path of tryPaths) {
-        try {
-          const payload = await apiFetchJson<unknown>(path, { method: "GET", auth: true })
-          const name = extractUsername(payload)
-          if (name) {
-            setUsernamesById((prev) => ({ ...prev, [userId]: name }))
-            return
-          }
-        } catch (e) {
-          if (e instanceof ApiError) {
-            if (e.status === 401 || e.status === 403) {
-              handleApiError(e)
-              return
-            }
-            // Ignore 404/405 and try next candidate path.
-            if (e.status === 404 || e.status === 405) continue
-          }
-        }
-      }
-    },
-    [ready, usernamesById],
-  )
-
-  useEffect(() => {
-    if (!ready) return
-
-    const missing = new Set<string>()
-    for (const m of items) {
-      const k = toUserKey(m)
-      if (!k) continue
-      if (m.username) continue
-      if (!usernamesById[k]) missing.add(k)
-    }
-
-    if (missing.size === 0) return
-    void Promise.all(Array.from(missing).slice(0, 25).map((id) => fetchUsernameByUserId(id)))
-  }, [fetchUsernameByUserId, items, ready, usernamesById])
 
   useEffect(() => {
     if (authLoading) return
@@ -261,12 +153,6 @@ export default function MembersPage() {
 
       const normalized = normalizeMember(created)
       setItems((prev) => [normalized, ...prev])
-      const key = toUserKey(normalized)
-      if (key && normalized.username) {
-        setUsernamesById((prev) => ({ ...prev, [key]: normalized.username! }))
-      } else if (key) {
-        void fetchUsernameByUserId(key)
-      }
       setUserId("")
       setRole("VIEWER")
       toast.success("Member added")
@@ -294,101 +180,34 @@ export default function MembersPage() {
         return
       }
 
-      const key = member.id ?? member.user_id
-      if (key === undefined || key === null) {
-        toast.error("Member id missing")
+      const targetUserId = member.user_id
+      if (targetUserId === undefined || targetUserId === null) {
+        toast.error("Member user_id missing")
         return
       }
 
-      // Try common patterns without changing backend contracts.
-      // Prefer user_id first (some APIs use user_id in the path).
-      const tryPaths = [
-        `/workspaces/${workspaceId}/members/${member.user_id ?? key}`,
-        `/workspaces/${workspaceId}/members/${key}`,
-      ]
-
-      let updated: Member | null = null
-      let lastErr: string | null = null
-
-      const bodyForMember = JSON.stringify({ role: nextRole, user_id: member.user_id })
-      const bodyForCollection = JSON.stringify({ user_id: member.user_id ?? key, role: nextRole })
-
-      for (const path of tryPaths) {
-        for (const method of ["PATCH", "PUT"] as const) {
-          try {
-            updated = await apiFetchJson<Member>(path, {
-              method,
-              auth: true,
-              headers: { "Content-Type": "application/json" },
-              body: bodyForMember,
-            })
-            lastErr = null
-            break
-          } catch (e) {
-            if (e instanceof ApiError) {
-              // Auth and permission errors should be surfaced immediately.
-              if (e.status === 401 || e.status === 403) {
-                handleApiError(e)
-                return
-              }
-
-              // 404/405 are expected during probing different endpoints/methods.
-              if (e.status === 404 || e.status === 405) {
-                lastErr = null
-                continue
-              }
-
-              lastErr = e.message
-              continue
-            }
-
-            lastErr = e instanceof Error ? e.message : "Update failed"
-          }
-        }
-
-        if (updated) break
-      }
-
-      if (!updated) {
-        // Fallback: some APIs update via collection route
-        for (const method of ["PATCH", "PUT"] as const) {
-          try {
-            updated = await apiFetchJson<Member>(`/workspaces/${workspaceId}/members`, {
-              method,
-              auth: true,
-              headers: { "Content-Type": "application/json" },
-              body: bodyForCollection,
-            })
-            lastErr = null
-            break
-          } catch (e) {
-            if (e instanceof ApiError) {
-              if (e.status === 401 || e.status === 403) {
-                handleApiError(e)
-                return
-              }
-              if (e.status === 404 || e.status === 405) {
-                lastErr = null
-                continue
-              }
-              lastErr = e.message
-              continue
-            }
-
-            lastErr = e instanceof Error ? e.message : "Update failed"
-          }
-        }
-      }
-
-      if (!updated) {
-        toast.error(lastErr ?? "Role update is not supported by the server")
+      let updated: Member
+      try {
+        updated = await apiFetchJson<Member>(
+          `/workspaces/${workspaceId}/members/${targetUserId}`,
+          {
+            method: "PATCH",
+            auth: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: targetUserId, role: nextRole }),
+          },
+        )
+      } catch (e) {
+        const handled = handleApiError(e)
+        if (!handled.handled) toast.error(e instanceof ApiError ? e.message : "Update failed")
         return
       }
 
       setItems((prev) =>
         prev.map((m) => {
-          const mKey = m.id ?? m.user_id
-          return normalizeId(mKey) === normalizeId(key) ? { ...m, role: updated!.role ?? nextRole } : m
+          return normalizeId(m.user_id) === normalizeId(targetUserId)
+            ? normalizeMember({ ...m, ...updated })
+            : m
         }),
       )
       toast.success("Role updated")
@@ -408,40 +227,23 @@ export default function MembersPage() {
         return
       }
 
-      const key = member.id ?? member.user_id
-      if (key === undefined || key === null) {
-        toast.error("Member id missing")
+      const targetUserId = member.user_id
+      if (targetUserId === undefined || targetUserId === null) {
+        toast.error("Member user_id missing")
         return
       }
 
-      // Confirmation handled via AlertDialog
-
-      const tryPaths = [
-        `/workspaces/${workspaceId}/members/${key}`,
-        `/workspaces/${workspaceId}/members/${member.user_id ?? key}`,
-      ]
-
-      for (const path of tryPaths) {
-        try {
-          const res = await apiFetch(path, { method: "DELETE", auth: true })
-          if (!res.ok) {
-            const body = await res.text().catch(() => "")
-            throw new ApiError(extractErrorMessage(res.status, body), res.status, body)
-          }
-
-          setItems((prev) =>
-            prev.filter((m) => normalizeId(m.id ?? m.user_id) !== normalizeId(key)),
-          )
-          toast.success("Removed")
-          return
-        } catch (e) {
-          const handled = handleApiError(e)
-          if (handled.kind === "unauthorized") return
-          // try next
-        }
+      try {
+        await apiFetchJson<{ detail: string }>(
+          `/workspaces/${workspaceId}/members/${targetUserId}`,
+          { method: "DELETE", auth: true },
+        )
+        setItems((prev) => prev.filter((m) => normalizeId(m.user_id) !== normalizeId(targetUserId)))
+        toast.success("Removed")
+      } catch (e) {
+        const handled = handleApiError(e)
+        if (!handled.handled) toast.error(e instanceof ApiError ? e.message : "Remove failed")
       }
-
-      toast.error("Remove failed")
     },
     [canManage, canSetOwner, ready, workspaceId],
   )
@@ -485,7 +287,7 @@ export default function MembersPage() {
   }, [items])
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
       <AlertDialog
         open={removeOpen}
         onOpenChange={(open) => {
@@ -613,7 +415,7 @@ export default function MembersPage() {
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">
-                        {m.username ?? usernamesById[toUserKey(m)] ?? m.email ?? "User"}
+                        {m.username ?? m.email ?? (toUserKey(m) ? `User #${toUserKey(m)}` : "User")}
                       </div>
                     </div>
 

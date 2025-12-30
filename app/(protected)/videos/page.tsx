@@ -4,7 +4,9 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Play, FileVideo, AlertCircle, Ellipsis, Pencil, Trash2 } from "lucide-react"
+import { Play, FileVideo, AlertCircle, Ellipsis, Pencil, Trash2, Download } from "lucide-react"
+import { LoaderOne } from "@/components/ui/loader"
+import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import {
   AlertDialog,
@@ -22,6 +24,7 @@ import { handleApiError } from "@/lib/handle-api-error"
 import { useWorkspace } from "@/lib/workspace-context"
 import { canDeleteContent, canEditContent } from "@/lib/rbac"
 import { useAuth } from "@/lib/auth-context"
+import { getCachedMediaUrl, getOrFetchMediaUrl, removeCachedMedia } from "@/lib/media-cache"
 
 type VideoFile = {
   id: string | number
@@ -29,6 +32,7 @@ type VideoFile = {
   mime_type?: string
   mediaUrl?: string
   loadError?: boolean
+  mediaLoading?: boolean
 }
 
 export default function VideosPage() {
@@ -48,7 +52,7 @@ export default function VideosPage() {
   const ready = !authLoading && isAuthenticated && !loadingWorkspaces && !!workspaceId && !loadingRole
 
   useEffect(() => {
-    const revoked: string[] = []
+    let cancelled = false
 
     if (authLoading) return
     if (!isAuthenticated) return
@@ -58,14 +62,15 @@ export default function VideosPage() {
     if (!workspaceId) {
       setError("No workspace selected.")
       setLoading(false)
-      return () => {
-        revoked.forEach((url) => URL.revokeObjectURL(url))
-      }
+      return
     }
 
     const getVideos = async () => {
       try {
         if (!ready) return
+        setLoading(true)
+        setError(null)
+
         const response = await apiFetch(
           `/workspaces/${workspaceId}/media/?page=${page}&page_size=${pageSize}&type=video`,
           { method: "GET", auth: true },
@@ -90,8 +95,8 @@ export default function VideosPage() {
             ? payload.items
             : []
 
-        const filesWithMediaUrl = (await Promise.all(
-          items.map(async (item: unknown): Promise<VideoFile | null> => {
+        const baseVideos = items
+          .map((item: unknown): VideoFile | null => {
             const media = item as {
               id?: string | number
               original_filename?: string
@@ -101,49 +106,59 @@ export default function VideosPage() {
             const id = media?.id
             if (id === undefined || id === null) return null
 
-            try {
-              const fileResp = await apiFetch(
-                `/workspaces/${workspaceId}/media/${id}/download`,
-                { method: "GET", auth: true },
-              )
-
-              if (!fileResp.ok) {
-                throw new Error(`Failed to fetch video: ${fileResp.status} ${fileResp.statusText}`)
-              }
-
-              const blob = await fileResp.blob()
-              const objectUrl = URL.createObjectURL(blob)
-              revoked.push(objectUrl)
-              return {
-                id,
-                original_filename: media.original_filename,
-                mime_type: media.mime_type,
-                mediaUrl: objectUrl,
-              }
-            } catch {
-              return {
-                id,
-                original_filename: media.original_filename,
-                mime_type: media.mime_type,
-                loadError: true,
-              }
+            const cachedUrl = getCachedMediaUrl(workspaceId, id)
+            return {
+              id,
+              original_filename: media.original_filename,
+              mime_type: media.mime_type,
+              mediaUrl: cachedUrl ?? undefined,
+              loadError: false,
+              mediaLoading: !cachedUrl,
             }
-          }),
-        ))
+          })
           .filter((v): v is VideoFile => v !== null)
 
-        setVideos(filesWithMediaUrl)
+        // Render the list immediately; fetch blobs per-card in background.
+        if (!cancelled) setVideos(baseVideos)
+        setLoading(false)
+
+        const concurrency = 2
+        const queue = baseVideos.filter((v) => !v.mediaUrl)
+        const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+          while (queue.length) {
+            const next = queue.shift()
+            if (!next) break
+
+            try {
+              const url = await getOrFetchMediaUrl(workspaceId, next.id)
+              if (cancelled) continue
+              setVideos((prev) =>
+                prev.map((v) =>
+                  v.id === next.id ? { ...v, mediaUrl: url, mediaLoading: false, loadError: false } : v,
+                ),
+              )
+            } catch {
+              if (cancelled) continue
+              setVideos((prev) =>
+                prev.map((v) => (v.id === next.id ? { ...v, mediaLoading: false, loadError: true } : v)),
+              )
+            }
+          }
+        })
+
+        void Promise.all(workers)
       } catch {
         setError("Unable to load videos right now.")
       } finally {
-        setLoading(false)
+        // If we already rendered the list, don't flip loading here.
+        setLoading((prev) => prev && false)
       }
     }
 
     getVideos()
 
     return () => {
-      revoked.forEach((url) => URL.revokeObjectURL(url))
+      cancelled = true
     }
   }, [authLoading, isAuthenticated, loadingRole, loadingWorkspaces, page, ready, workspaceId])
 
@@ -205,7 +220,7 @@ export default function VideosPage() {
       }
 
       if (video.mediaUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(video.mediaUrl)
+        removeCachedMedia(workspaceId!, video.id)
       }
       setVideos((prev) => prev.filter((v) => v.id !== video.id))
       toast.success("Deleted")
@@ -236,8 +251,32 @@ export default function VideosPage() {
     }
   }
 
+  const downloadVideo = async (video: VideoFile) => {
+    if (!ready) return
+
+    const filename = (video.original_filename ?? `video-${String(video.id)}`).trim() || `video-${String(video.id)}`
+
+    try {
+      const url = video.mediaUrl ?? (await getOrFetchMediaUrl(workspaceId!, video.id))
+
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (e) {
+      const handled = handleApiError(e)
+      if (!handled.handled) toast.error(e instanceof ApiError ? e.message : "Download failed")
+    }
+  }
+
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
+      <div className="mb-4">
+        <h1 className="text-2xl font-semibold">Videos</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Browse and download your workspace video files.</p>
+      </div>
       <AlertDialog
         open={deleteOpen}
         onOpenChange={(open) => {
@@ -285,7 +324,7 @@ export default function VideosPage() {
         <Card>
           <CardContent className="flex items-center justify-center py-12">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <FileVideo className="h-5 w-5 animate-pulse" />
+              <LoaderOne />
               <p className="text-sm">Loading videos…</p>
             </div>
           </CardContent>
@@ -375,26 +414,40 @@ export default function VideosPage() {
                         borderRadius: '8px'
                       }}
                     >
-                      <video
-                        controls
-                        style={{
-                          width: '100%',
-                          height: 'auto',
-                          maxHeight: '260px',
-                          display: 'block',
-                          objectFit: 'contain',
-                          borderRadius: '8px'
-                        }}
-                        preload="metadata"
-                        crossOrigin="anonymous"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <source
-                          src={video.mediaUrl}
-                          type={video.mime_type ?? "video/mp4"}
-                        />
-                        Your browser does not support the video tag.
-                      </video>
+                      {video.mediaUrl ? (
+                        <video
+                          controls
+                          style={{
+                            width: '100%',
+                            height: 'auto',
+                            maxHeight: '260px',
+                            display: 'block',
+                            objectFit: 'contain',
+                            borderRadius: '8px'
+                          }}
+                          preload="metadata"
+                          crossOrigin="anonymous"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <source
+                            src={video.mediaUrl}
+                            type={video.mime_type ?? "video/mp4"}
+                          />
+                          Your browser does not support the video tag.
+                        </video>
+                      ) : (
+                        <div
+                          className="flex items-center justify-center text-muted-foreground"
+                          style={{ height: 160 }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <LoaderOne />
+                            <p className="text-sm">
+                              {video.mediaLoading ? "Preparing preview…" : "Preview unavailable"}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <CardTitle className="truncate text-base">
@@ -413,6 +466,22 @@ export default function VideosPage() {
                         </p>
                       </div>
                     )}
+
+                    <div className="flex justify-end pt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void downloadVideo(video)
+                        }}
+                        disabled={!ready}
+                        style={{ borderRadius: 12 }}
+                        className="text-[#6F26D4] hover:bg-[#6F26D4]/10"
+                      >
+                        <Download className="h-4 w-4" /> Download
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ))}

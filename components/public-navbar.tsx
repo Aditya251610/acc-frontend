@@ -24,7 +24,7 @@ export default function PublicNavbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   return (
-    <ResizableNavbar className="top-0">
+    <ResizableNavbar>
       <NavBody>
         <Link
           href="/"
@@ -39,7 +39,12 @@ export default function PublicNavbar() {
           <NavbarButton as={Link} href="/login" variant="secondary">
             Login
           </NavbarButton>
-          <NavbarButton as={Link} href="/signup" variant="dark" style={{ backgroundColor: '#6F26D4', borderRadius: '0.375rem' }} className="text-white hover:brightness-95">
+          <NavbarButton
+            as={Link}
+            href="/signup"
+            variant="dark"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
             Sign Up
           </NavbarButton>
         </div>
@@ -89,8 +94,7 @@ export default function PublicNavbar() {
               as={Link}
               href="/signup"
               variant="dark"
-              className="w-full text-left text-white hover:brightness-95"
-              style={{ backgroundColor: '#6F26D4', borderRadius: '0.375rem' }}
+              className="w-full bg-primary text-left text-primary-foreground hover:bg-primary/90"
               onClick={() => setIsMenuOpen(false)}
             >
               Sign Up

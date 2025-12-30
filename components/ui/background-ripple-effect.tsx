@@ -1,22 +1,45 @@
 "use client";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export const BackgroundRippleEffect = ({
-  rows = 8,
-  cols = 27,
+  rows,
+  cols,
   cellSize = 56,
 }: {
   rows?: number;
   cols?: number;
   cellSize?: number;
 }) => {
+  const [viewport, setViewport] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
   const [clickedCell, setClickedCell] = useState<{
     row: number;
     col: number;
   } | null>(null);
   const [rippleKey, setRippleKey] = useState(0);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const update = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+    update();
+    window.addEventListener("resize", update, { passive: true });
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const effectiveCols =
+    typeof cols === "number" && cols > 0
+      ? cols
+      : Math.max(1, Math.ceil(viewport.width / cellSize) + 2);
+
+  const effectiveRows =
+    typeof rows === "number" && rows > 0
+      ? rows
+      : Math.max(1, Math.ceil(viewport.height / cellSize) + 2);
 
   return (
     <div
@@ -27,13 +50,13 @@ export const BackgroundRippleEffect = ({
         "dark:[--cell-border-color:var(--color-neutral-700)] dark:[--cell-fill-color:var(--color-neutral-900)] dark:[--cell-shadow-color:var(--color-neutral-800)]",
       )}
     >
-      <div className="relative h-auto w-auto overflow-hidden">
+      <div className="relative h-full w-full overflow-hidden">
         <div className="pointer-events-none absolute inset-0 z-[2] h-full w-full overflow-hidden" />
         <DivGrid
           key={`base-${rippleKey}`}
           className="mask-radial-from-20% mask-radial-at-top opacity-600"
-          rows={rows}
-          cols={cols}
+          rows={effectiveRows}
+          cols={effectiveCols}
           cellSize={cellSize}
           borderColor="var(--cell-border-color)"
           fillColor="var(--cell-fill-color)"

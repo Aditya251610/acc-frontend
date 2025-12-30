@@ -145,3 +145,64 @@ export async function apiFetchJson<T>(
   return (await res.json()) as T
 }
 
+export type MyProfile = {
+  id: number | string
+  email: string
+  username: string
+  first_name: string | null
+  last_name: string | null
+  avatar_url: string | null
+  date_of_birth: string | null
+  bio: string | null
+  created_at: string
+  recent_workspaces?: Array<{
+    id: number | string
+    name: string
+    created_at?: string
+    role?: string | null
+  }>
+}
+
+export type UpdateMyProfilePayload = Partial<{
+  username: string
+  first_name: string
+  last_name: string
+  avatar_url: string
+  date_of_birth: string
+  bio: string
+}>
+
+export async function getMyProfile(): Promise<MyProfile> {
+  return apiFetchJson<MyProfile>("/users/me", { method: "GET", auth: true })
+}
+
+export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<MyProfile> {
+  return apiFetchJson<MyProfile>("/users/me", {
+    method: "PATCH",
+    auth: true,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  })
+}
+
+// Avatar upload
+// Assumption: backend supports multipart upload at POST /users/me/avatar with field name "file"
+// and returns the updated profile (same shape as GET /users/me).
+export async function uploadMyAvatar(file: File): Promise<MyProfile> {
+  const form = new FormData()
+  form.append("file", file)
+
+  const res = await apiFetch("/users/me/avatar", {
+    method: "POST",
+    auth: true,
+    body: form,
+  })
+
+  if (!res.ok) {
+    const body = await safeReadJson(res)
+    throw new ApiError(extractErrorMessage(res.status, body), res.status, body)
+  }
+
+  return (await res.json()) as MyProfile
+}
+

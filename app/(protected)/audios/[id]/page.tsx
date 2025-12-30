@@ -10,6 +10,7 @@ import { handleApiError } from '@/lib/handle-api-error'
 import CommentsThread from '@/components/comments-thread'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useAuth } from '@/lib/auth-context'
+import { getOrFetchMediaUrl } from '@/lib/media-cache'
 
 type AudioDetails = {
   id: string | number
@@ -31,7 +32,7 @@ export default function AudioDetailsPage() {
   const ready = !authLoading && isAuthenticated && !loadingWorkspaces && !!workspaceId && !loadingRole
 
   useEffect(() => {
-    let objectUrl: string | null = null
+    let cancelled = false
 
     const fetchAudioDetails = async () => {
       try {
@@ -85,17 +86,11 @@ export default function AudioDetailsPage() {
           return
         }
 
-        const fileResp = await apiFetch(`/workspaces/${workspaceId}/media/${audioFile.id}/download`, {
-          method: 'GET',
-          auth: true,
-        })
-
-        if (fileResp.ok) {
-          const blob = await fileResp.blob()
-          objectUrl = URL.createObjectURL(blob)
-          setAudio({ ...audioFile, mediaUrl: objectUrl })
-        } else {
-          setAudio(audioFile)
+        try {
+          const url = await getOrFetchMediaUrl(workspaceId, audioFile.id)
+          if (!cancelled) setAudio({ ...audioFile, mediaUrl: url })
+        } catch {
+          if (!cancelled) setAudio(audioFile)
         }
 
         setLoading(false)
@@ -110,13 +105,13 @@ export default function AudioDetailsPage() {
     fetchAudioDetails()
 
     return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      cancelled = true
     }
   }, [authLoading, isAuthenticated, loadingRole, loadingWorkspaces, params.id, ready, workspaceId])
 
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto">
         <div className="flex items-center justify-center py-12">
           <FileAudio className="h-8 w-8 animate-pulse text-muted-foreground" />
         </div>
@@ -126,7 +121,7 @@ export default function AudioDetailsPage() {
 
   if (error || !audio) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto">
         <Card style={{ borderRadius: '1rem' }} className="border-destructive">
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <FileAudio className="h-12 w-12 text-destructive" />
@@ -163,7 +158,7 @@ export default function AudioDetailsPage() {
   }
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
       <div className="mb-6">
         <Link
           href="/audios"
@@ -178,9 +173,9 @@ export default function AudioDetailsPage() {
         {/* Main Player Card */}
         <Card style={{ borderRadius: '1rem' }} className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Music className="h-5 w-5 text-primary" />
-              {audio.original_filename}
+            <CardTitle className="flex min-w-0 items-center gap-2">
+              <Music className="h-5 w-5 shrink-0 text-primary" />
+              <span className="truncate">{audio.original_filename}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">

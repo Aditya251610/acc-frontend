@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import PublicNavbar from "@/components/public-navbar"
+import { LoaderThree } from "@/components/ui/loader"
 
 export default function AuthLayout({
   children,
@@ -22,7 +23,11 @@ export default function AuthLayout({
 
   // Show nothing while checking auth or if already authenticated
   if (loading || isAuthenticated) {
-    return null
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-background">
+        <LoaderThree />
+      </div>
+    )
   }
 
   return (

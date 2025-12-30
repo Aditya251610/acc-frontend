@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { FileUpload } from '@/components/ui/file-upload'
-import { Loader2 } from 'lucide-react'
+import { LoaderOne } from "@/components/ui/loader"
 import { ApiError, apiFetch, extractErrorMessage } from '@/lib/api'
 import { handleApiError } from '@/lib/handle-api-error'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -107,10 +107,10 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="flex w-full items-start justify-center py-6 sm:items-center sm:py-8">
       <div
         style={{ borderRadius: '1rem' }}
-        className="w-full max-w-2xl border bg-card p-8 space-y-6 shadow-lg"
+        className="w-full max-w-2xl space-y-6 border bg-card p-4 shadow-lg sm:p-6 lg:p-8"
       >
         {!workspaceId && (
           <div
@@ -146,10 +146,10 @@ export default function UploadPage() {
             <h3 className="text-sm font-medium">Selected Files ({files.length})</h3>
             <ul className="space-y-1 text-xs text-muted-foreground">
               {files.map((file, idx) => (
-                <li key={idx} className="flex items-center gap-2">
+                <li key={idx} className="flex min-w-0 items-center gap-2">
                   <span>•</span>
-                  <span className="truncate">{file.name}</span>
-                  <span className="text-xs">({(file.size / (1024 * 1024)).toFixed(2)} MB)</span>
+                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  <span className="shrink-0 text-xs">({(file.size / (1024 * 1024)).toFixed(2)} MB)</span>
                 </li>
               ))}
             </ul>
@@ -180,7 +180,7 @@ export default function UploadPage() {
         >
           {uploading ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <LoaderOne />
               <span>Uploading...</span>
             </>
           ) : (

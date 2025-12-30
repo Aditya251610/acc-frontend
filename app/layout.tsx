@@ -1,6 +1,8 @@
 import "./globals.css"
 import { BackgroundRippleEffect } from "@/components/ui/background-ripple-effect"
 import { AuthProvider } from "@/lib/auth-context"
+import { ThemeProvider } from "@/components/theme-provider"
+import ThemeTogglePositioned from "@/components/theme-toggle-positioned"
 import { Montserrat, Poppins, DM_Sans, Nunito } from "next/font/google"
 import { Toaster } from "sonner"
 
@@ -21,16 +23,17 @@ export default function RootLayout({
       className={`${montserrat.variable} ${poppins.variable} ${dmSans.variable} ${nunito.variable}`}
     >
       <body className="relative min-h-screen overflow-x-hidden overflow-y-auto" suppressHydrationWarning>
-        <AuthProvider>
-          <div className="absolute inset-0 z-0 pointer-events-none">
-            <BackgroundRippleEffect />
-          </div>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+          <ThemeTogglePositioned compact />
+          <AuthProvider>
+            <div className="fixed inset-0 z-0 pointer-events-none">
+              <BackgroundRippleEffect />
+            </div>
 
-          <main className="relative z-10">
-            {children}
-          </main>
-          <Toaster richColors position="bottom-right" />
-        </AuthProvider>
+            <main className="relative z-10">{children}</main>
+            <Toaster richColors position="bottom-right" />
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

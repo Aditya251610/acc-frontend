@@ -4,7 +4,9 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Music, FileAudio, AlertCircle, Ellipsis, Pencil, Trash2 } from "lucide-react"
+import { Music, FileAudio, AlertCircle, Ellipsis, Pencil, Trash2, Download } from "lucide-react"
+import { LoaderOne } from "@/components/ui/loader"
+import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import {
   AlertDialog,
@@ -22,6 +24,7 @@ import { handleApiError } from "@/lib/handle-api-error"
 import { useWorkspace } from "@/lib/workspace-context"
 import { canDeleteContent, canEditContent } from "@/lib/rbac"
 import { useAuth } from "@/lib/auth-context"
+import { getCachedMediaUrl, getOrFetchMediaUrl, removeCachedMedia } from "@/lib/media-cache"
 
 type AudioFile = {
   id: string | number
@@ -29,6 +32,7 @@ type AudioFile = {
   mime_type?: string
   mediaUrl?: string
   loadError?: boolean
+  mediaLoading?: boolean
 }
 
 export default function AudiosPage() {
@@ -52,7 +56,7 @@ export default function AudiosPage() {
   const ready = !authLoading && isAuthenticated && !loadingWorkspaces && !!workspaceId && !loadingRole
 
   useEffect(() => {
-    const revoked: string[] = []
+    let cancelled = false
 
     if (authLoading) return
     if (!isAuthenticated) return
@@ -62,14 +66,15 @@ export default function AudiosPage() {
     if (!workspaceId) {
       setError("No workspace selected.")
       setLoading(false)
-      return () => {
-        revoked.forEach((url) => URL.revokeObjectURL(url))
-      }
+      return
     }
 
     const getAudios = async () => {
       try {
         if (!ready) return
+        setLoading(true)
+        setError(null)
+
         const response = await apiFetch(
           `/workspaces/${workspaceId}/media/?page=${page}&page_size=${pageSize}&type=audio`,
           { method: "GET", auth: true },
@@ -94,8 +99,8 @@ export default function AudiosPage() {
             ? payload.items
             : []
 
-        const filesWithMediaUrl = (await Promise.all(
-          items.map(async (item: unknown): Promise<AudioFile | null> => {
+        const baseAudios = items
+          .map((item: unknown): AudioFile | null => {
             const media = item as {
               id?: string | number
               original_filename?: string
@@ -105,49 +110,59 @@ export default function AudiosPage() {
             const id = media?.id
             if (id === undefined || id === null) return null
 
-            try {
-              const fileResp = await apiFetch(
-                `/workspaces/${workspaceId}/media/${id}/download`,
-                { method: "GET", auth: true },
-              )
-
-              if (!fileResp.ok) {
-                throw new Error(`Failed to fetch audio: ${fileResp.status} ${fileResp.statusText}`)
-              }
-
-              const blob = await fileResp.blob()
-              const objectUrl = URL.createObjectURL(blob)
-              revoked.push(objectUrl)
-              return {
-                id,
-                original_filename: media.original_filename,
-                mime_type: media.mime_type,
-                mediaUrl: objectUrl,
-              }
-            } catch {
-              return {
-                id,
-                original_filename: media.original_filename,
-                mime_type: media.mime_type,
-                loadError: true,
-              }
+            const cachedUrl = getCachedMediaUrl(workspaceId, id)
+            return {
+              id,
+              original_filename: media.original_filename,
+              mime_type: media.mime_type,
+              mediaUrl: cachedUrl ?? undefined,
+              loadError: false,
+              mediaLoading: !cachedUrl,
             }
-          }),
-        ))
+          })
           .filter((a): a is AudioFile => a !== null)
 
-        setAudios(filesWithMediaUrl)
+        // Render the list immediately; fetch blobs per-card in background.
+        if (!cancelled) setAudios(baseAudios)
+        setLoading(false)
+
+        const concurrency = 4
+        const queue = baseAudios.filter((a) => !a.mediaUrl)
+        const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+          while (queue.length) {
+            const next = queue.shift()
+            if (!next) break
+
+            try {
+              const url = await getOrFetchMediaUrl(workspaceId, next.id)
+              if (cancelled) continue
+              setAudios((prev) =>
+                prev.map((a) =>
+                  a.id === next.id ? { ...a, mediaUrl: url, mediaLoading: false, loadError: false } : a,
+                ),
+              )
+            } catch {
+              if (cancelled) continue
+              setAudios((prev) =>
+                prev.map((a) => (a.id === next.id ? { ...a, mediaLoading: false, loadError: true } : a)),
+              )
+            }
+          }
+        })
+
+        void Promise.all(workers)
       } catch {
         setError("No audios available right now.")
       } finally {
-        setLoading(false)
+        // If we already rendered the list, don't flip loading here.
+        setLoading((prev) => prev && false)
       }
     }
 
     getAudios()
 
     return () => {
-      revoked.forEach((url) => URL.revokeObjectURL(url))
+      cancelled = true
     }
   }, [authLoading, isAuthenticated, loadingRole, loadingWorkspaces, page, ready, workspaceId])
 
@@ -205,7 +220,7 @@ export default function AudiosPage() {
       }
 
       if (audio.mediaUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(audio.mediaUrl)
+        removeCachedMedia(workspaceId!, audio.id)
       }
       setAudios((prev) => prev.filter((a) => a.id !== audio.id))
       toast.success("Deleted")
@@ -236,8 +251,32 @@ export default function AudiosPage() {
     }
   }
 
+  const downloadAudio = async (audio: AudioFile) => {
+    if (!ready) return
+
+    const filename = (audio.original_filename ?? `audio-${String(audio.id)}`).trim() || `audio-${String(audio.id)}`
+
+    try {
+      const url = audio.mediaUrl ?? (await getOrFetchMediaUrl(workspaceId!, audio.id))
+
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (e) {
+      const handled = handleApiError(e)
+      if (!handled.handled) toast.error(e instanceof ApiError ? e.message : "Download failed")
+    }
+  }
+
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto flex flex-col">
+      <div className="mb-4">
+        <h1 className="text-2xl font-semibold">Audios</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Browse and download your workspace audio files.</p>
+      </div>
       <AlertDialog
         open={deleteOpen}
         onOpenChange={(open) => {
@@ -285,7 +324,7 @@ export default function AudiosPage() {
         <Card>
           <CardContent className="flex items-center justify-center py-12">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <FileAudio className="h-5 w-5 animate-pulse" />
+              <LoaderOne />
               <p className="text-sm">Loading audios…</p>
             </div>
           </CardContent>
@@ -302,7 +341,7 @@ export default function AudiosPage() {
       )}
 
       {!loading && !error && (
-        <>
+        <div className="flex flex-1 flex-col">
           {!loadingRole && !canEdit && (
             <Card className="mb-6">
               <CardContent className="py-4 text-sm text-muted-foreground">
@@ -325,12 +364,12 @@ export default function AudiosPage() {
               {audios.map((audio) => (
                 <Card 
                   key={audio.id} 
-                  className="overflow-hidden cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
+                  className="cursor-pointer overflow-hidden gap-0 py-0 transition-all hover:scale-[1.02] hover:shadow-lg"
                   onClick={() => {
                     router.push(`/audios/${audio.id}`)
                   }}
                 >
-                  <CardHeader className="pb-1 flex justify-end">
+                  <CardHeader className="flex justify-end px-4 pb-2 pt-4">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -367,21 +406,33 @@ export default function AudiosPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </CardHeader>
-                  <CardContent className="space-y-2 pb-4">
-                    <div className="w-full bg-muted p-3 overflow-hidden" style={{ borderRadius: '0.5rem' }}>
-                      <audio
-                        controls
-                        className="h-9 w-full"
-                        style={{ borderRadius: '0.5rem' }}
-                        preload="metadata"
-                        crossOrigin="anonymous"
-                      >
-                        <source
-                          src={audio.mediaUrl}
-                          type={audio.mime_type ?? "audio/mpeg"}
-                        />
-                        Your browser does not support the audio element.
-                      </audio>
+                  <CardContent className="space-y-2 px-4 pb-4 pt-0">
+                    <div className="w-full overflow-hidden bg-muted p-2" style={{ borderRadius: '0.5rem' }}>
+                      {audio.mediaUrl ? (
+                        <audio
+                          controls
+                          className="h-9 w-full"
+                          style={{ borderRadius: '0.5rem' }}
+                          preload="metadata"
+                          crossOrigin="anonymous"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <source
+                            src={audio.mediaUrl}
+                            type={audio.mime_type ?? "audio/mpeg"}
+                          />
+                          Your browser does not support the audio element.
+                        </audio>
+                      ) : (
+                        <div className="flex h-9 items-center justify-center text-muted-foreground">
+                          <div className="flex items-center gap-2">
+                            <LoaderOne />
+                            <p className="text-xs">
+                              {audio.mediaLoading ? "Preparing preview…" : "Preview unavailable"}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <CardTitle className="truncate text-base">
@@ -400,13 +451,29 @@ export default function AudiosPage() {
                         </p>
                       </div>
                     )}
+
+                    <div className="flex justify-end pt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void downloadAudio(audio)
+                        }}
+                        disabled={!ready}
+                        style={{ borderRadius: 12 }}
+                        className="text-[#6F26D4] hover:bg-[#6F26D4]/10"
+                      >
+                        <Download className="h-4 w-4" /> Download
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
           )}
 
-          <div className="mt-6 flex items-center justify-between">
+          <div className="mt-auto flex items-center justify-between pt-6">
             <button
               type="button"
               className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
@@ -424,7 +491,7 @@ export default function AudiosPage() {
               Next
             </button>
           </div>
-        </>
+        </div>
       )}
     </div>
   )

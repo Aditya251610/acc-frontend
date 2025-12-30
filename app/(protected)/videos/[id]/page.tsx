@@ -18,6 +18,7 @@ import { handleApiError } from '@/lib/handle-api-error'
 import CommentsThread from '@/components/comments-thread'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useAuth } from '@/lib/auth-context'
+import { getOrFetchMediaUrl } from '@/lib/media-cache'
 
 type VideoDetails = {
   id: string | number
@@ -39,7 +40,7 @@ export default function VideoDetailsPage() {
   const ready = !authLoading && isAuthenticated && !loadingWorkspaces && !!workspaceId && !loadingRole
 
   useEffect(() => {
-    let objectUrl: string | null = null
+    let cancelled = false
 
     const fetchVideoDetails = async () => {
       try {
@@ -92,17 +93,11 @@ export default function VideoDetailsPage() {
           return
         }
 
-        const fileResp = await apiFetch(`/workspaces/${workspaceId}/media/${videoFile.id}/download`, {
-          method: 'GET',
-          auth: true,
-        })
-
-        if (fileResp.ok) {
-          const blob = await fileResp.blob()
-          objectUrl = URL.createObjectURL(blob)
-          setVideo({ ...videoFile, mediaUrl: objectUrl })
-        } else {
-          setVideo(videoFile)
+        try {
+          const url = await getOrFetchMediaUrl(workspaceId, videoFile.id)
+          if (!cancelled) setVideo({ ...videoFile, mediaUrl: url })
+        } catch {
+          if (!cancelled) setVideo(videoFile)
         }
 
         setLoading(false)
@@ -117,13 +112,13 @@ export default function VideoDetailsPage() {
     fetchVideoDetails()
 
     return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      cancelled = true
     }
   }, [authLoading, isAuthenticated, loadingRole, loadingWorkspaces, params.id, ready, workspaceId])
 
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto">
         <div className="flex justify-center py-12">
           <FileVideo className="h-8 w-8 animate-pulse text-muted-foreground" />
         </div>
@@ -133,7 +128,7 @@ export default function VideoDetailsPage() {
 
   if (error || !video) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto">
         <Card className="border-destructive rounded-xl">
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <FileVideo className="h-12 w-12 text-destructive" />
@@ -169,7 +164,7 @@ export default function VideoDetailsPage() {
     })
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
       <div className="mb-6">
         <Link
           href="/videos"
@@ -180,7 +175,7 @@ export default function VideoDetailsPage() {
         </Link>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3 mb-[50%]">
+      <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 min-w-0" style={{ borderRadius: '1rem' }}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 min-w-0">

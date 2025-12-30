@@ -13,7 +13,13 @@ import {
 import { cn } from "@/lib/utils"
 import { useWorkspace } from "@/lib/workspace-context"
 
-export default function WorkspaceSwitcher({ className }: { className?: string }) {
+export default function WorkspaceSwitcher({
+  className,
+  compact = false,
+}: {
+  className?: string
+  compact?: boolean
+}) {
   const {
     workspaces,
     loadingWorkspaces,
@@ -30,16 +36,27 @@ export default function WorkspaceSwitcher({ className }: { className?: string })
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          className={cn("w-full justify-between", className)}
-          style={{ borderRadius: 12 }}
-        >
-          <span className="truncate">
-            {selected ? selected.name : "Select workspace"}
-          </span>
-          <ChevronsUpDown className="h-4 w-4 opacity-70" />
-        </Button>
+        {compact ? (
+          <Button
+            variant="outline"
+            aria-label="Select workspace"
+            className={cn("h-10 w-10 p-0 justify-center", className)}
+            style={{ borderRadius: 12 }}
+          >
+            <ChevronsUpDown className="h-4 w-4 opacity-70" />
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            className={cn("w-full justify-between h-10", className)}
+            style={{ borderRadius: 12 }}
+          >
+            <span className="truncate">
+              {selected ? selected.name : "Select workspace"}
+            </span>
+            <ChevronsUpDown className="h-4 w-4 opacity-70" />
+          </Button>
+        )}
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="start" sideOffset={8} className="w-56">

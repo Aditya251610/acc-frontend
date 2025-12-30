@@ -3,8 +3,9 @@
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
-import { FileText, Plus, Paperclip } from "lucide-react"
+import { Download, FileText, Plus, Paperclip } from "lucide-react"
 
+import { LoaderOne } from "@/components/ui/loader"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { ApiError, apiFetch, apiFetchJson, extractErrorMessage } from "@/lib/api"
 import { handleApiError } from "@/lib/handle-api-error"
+import { getOrFetchMediaUrl } from "@/lib/media-cache"
 import { useAuth } from "@/lib/auth-context"
 import { useWorkspace } from "@/lib/workspace-context"
 import { canDeleteContent, canEditContent } from "@/lib/rbac"
@@ -310,27 +312,12 @@ export default function DocumentsPage() {
       if (!ready) return
 
       try {
-        const res = await apiFetch(`/workspaces/${workspaceId}/media/${file.id}/download`, {
-          method: "GET",
-          auth: true,
-        })
-
-        if (!res.ok) {
-          const body = await res.text().catch(() => "")
-          const err = new ApiError(extractErrorMessage(res.status, body), res.status, body)
-          const handled = handleApiError(err)
-          if (!handled.handled) toast.error("Failed to download file")
-          return
-        }
-
-        const blob = await res.blob()
-        const objectUrl = URL.createObjectURL(blob)
-        const mime = file.mime_type ?? blob.type
+        const objectUrl = await getOrFetchMediaUrl(workspaceId!, file.id)
+        const mime = file.mime_type
 
         const shouldOpen = mime === "application/pdf" || mime === "text/plain"
         if (shouldOpen) {
           window.open(objectUrl, "_blank", "noopener,noreferrer")
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
           return
         }
 
@@ -340,7 +327,27 @@ export default function DocumentsPage() {
         document.body.appendChild(a)
         a.click()
         a.remove()
-        URL.revokeObjectURL(objectUrl)
+      } catch (e) {
+        const handled = handleApiError(e)
+        if (!handled.handled) toast.error(e instanceof Error ? e.message : "Download failed")
+      }
+    },
+    [ready, workspaceId],
+  )
+
+  const onDownloadFile = useCallback(
+    async (file: { id: number | string; title: string }) => {
+      if (!ready) return
+
+      try {
+        const objectUrl = await getOrFetchMediaUrl(workspaceId!, file.id)
+
+        const a = document.createElement("a")
+        a.href = objectUrl
+        a.download = file.title
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
       } catch (e) {
         const handled = handleApiError(e)
         if (!handled.handled) toast.error(e instanceof Error ? e.message : "Download failed")
@@ -350,7 +357,7 @@ export default function DocumentsPage() {
   )
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
       <AlertDialog
         open={deleteOpen}
         onOpenChange={(open) => {
@@ -442,7 +449,10 @@ export default function DocumentsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderOne />
+              <span>Loading…</span>
+            </div>
           ) : rows.length === 0 ? (
             <div className="text-sm text-muted-foreground">No documents yet.</div>
           ) : (
@@ -450,7 +460,7 @@ export default function DocumentsPage() {
               {rows.map((row) => (
                 <div
                   key={`${row.kind}-${String(row.id)}`}
-                  className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2"
+                  className="flex flex-col gap-3 rounded-lg border bg-background px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                   style={{ borderRadius: 14 }}
                 >
                   <div className="min-w-0">
@@ -467,7 +477,7 @@ export default function DocumentsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                     {row.kind === "document" ? (
                       <>
                         <Link
@@ -481,20 +491,32 @@ export default function DocumentsPage() {
                           onClick={() => requestDelete({ id: row.id, title: row.title })}
                           disabled={!canDelete}
                           style={{ borderRadius: 12 }}
+                          className="w-full sm:w-auto"
                         >
                           Delete
                         </Button>
                       </>
                     ) : (
-                      <Button
-                        variant="outline"
-                        onClick={() => void onOpenFile(row)}
-                        disabled={!ready}
-                        style={{ borderRadius: 12 }}
-                        className="text-[#6F26D4] hover:bg-[#6F26D4]/10"
-                      >
-                        Open
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          onClick={() => void onOpenFile(row)}
+                          disabled={!ready}
+                          style={{ borderRadius: 12 }}
+                          className="w-full text-[#6F26D4] hover:bg-[#6F26D4]/10 sm:w-auto"
+                        >
+                          Open
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => void onDownloadFile(row)}
+                          disabled={!ready}
+                          style={{ borderRadius: 12 }}
+                          className="w-full text-[#6F26D4] hover:bg-[#6F26D4]/10 sm:w-auto"
+                        >
+                          <Download className="h-4 w-4" /> Download
+                        </Button>
+                      </>
                     )}
                   </div>
                 </div>

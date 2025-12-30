@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { ArrowLeft, FileText, Save } from "lucide-react"
 
+import { LoaderOne } from "@/components/ui/loader"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -170,22 +171,25 @@ export default function DocumentDetailsPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="text-sm text-muted-foreground">Loading…</div>
+      <div className="container mx-auto">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderOne />
+          <span>Loading…</span>
+        </div>
       </div>
     )
   }
 
   if (!doc) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto">
         <div className="text-sm text-muted-foreground">Document not found.</div>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto">
       <div className="mb-6">
         <Link
           href="/documents"
@@ -217,7 +221,7 @@ export default function DocumentDetailsPage() {
               disabled={!canEdit}
               rows={14}
               placeholder="Write here…"
-              className="min-h-[320px]"
+              className="min-h-[220px] sm:min-h-[320px]"
             />
             <div className="flex justify-end">
               <Button

@@ -13,8 +13,8 @@ export default function WorkspaceRequired() {
   const { workspaceId } = useWorkspace()
 
   useEffect(() => {
-    // Allow dashboard without selection
-    if (pathname === "/dashboard") return
+    // Allow dashboard and profile without selection
+    if (pathname === "/dashboard" || pathname === "/profile") return
 
     if (authLoading || !isAuthenticated) return
 

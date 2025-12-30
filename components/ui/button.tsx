@@ -53,7 +53,7 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      style={{ borderRadius: '0.375rem', ...props.style }}
+      style={{ borderRadius: 18, ...props.style }}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />

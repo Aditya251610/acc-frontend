@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
 
+import { LoaderOne } from "@/components/ui/loader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { apiFetch, getWorkspaceIdNumber, setWorkspaceId } from "@/lib/api"
@@ -88,7 +89,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-8">
+    <div>
       <h1 className="text-2xl font-semibold">Dashboard</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Select a workspace to scope Videos, Audios, and Upload.
@@ -129,20 +130,24 @@ export default function DashboardPage() {
         className="mt-6 rounded-xl border bg-card p-4"
         style={{ borderRadius: 16 }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm font-medium">Your workspaces</div>
           <Button
             variant="outline"
             onClick={loadWorkspaces}
             disabled={loading}
             style={{ borderRadius: 12 }}
+            className="w-full sm:w-auto"
           >
             Refresh
           </Button>
         </div>
 
         {loading ? (
-          <div className="mt-4 text-sm text-muted-foreground">Loading…</div>
+            <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderOne />
+              <span>Loading…</span>
+            </div>
         ) : workspaces.length === 0 ? (
           <div className="mt-4 text-sm text-muted-foreground">
             No workspaces yet.
